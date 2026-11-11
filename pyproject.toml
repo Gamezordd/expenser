@@ -1,0 +1,42 @@
+[project]
+name = "expenser"
+version = "0.2.0"
+description = "Screenshot -> Claude -> Excel -> approve -> push expenses into Splitser (or any web app via YAML flows)"
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "anthropic>=2.6",
+    "pydantic>=2.7",
+    "pandas>=2.2",
+    "openpyxl>=3.1",
+    "playwright>=1.48",
+    "pyyaml>=6.0",
+    "ruamel.yaml>=0.18",
+    "pillow>=10",
+    "python-dotenv>=1.0",
+    "typer>=0.12",
+    "rich>=13.7",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+expenser = "expenser.cli:app"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["expenser*"]
+
+[tool.setuptools.package-data]
+expenser = ["flows/*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

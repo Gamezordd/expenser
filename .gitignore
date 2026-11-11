@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+output/
+.expenser/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+# your own group's member lists stay local
+participants/
+*.approved.json

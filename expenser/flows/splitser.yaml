@@ -1,0 +1,156 @@
+# Splitser (https://app.splitser.com) flow.
+# Selectors were verified against the live "Add transaction" page on 2026-11-08
+# (English UI). If Splitser changes its UI, re-check with:
+#   expenser flow validate splitser --var list_id=<uuid>
+#   expenser flow record   splitser --var list_id=<uuid> --key <selector-name>
+#
+# Run `expenser` (no arguments) for the interactive wizard: it signs you in, lists your
+# Splitser groups (group_picker), reads the members (members) and pushes the expenses.
+# NOTE: the `members` selectors were verified live; the `group_picker` selectors were NOT
+# (the lists page DOM is unknown), hence the permissive href regex. If group discovery
+# finds nothing, the wizard lets you paste the group URL/id instead.
+#
+# How Splitser splits: each member row has an AMOUNT box and a "- 1x +" share multiplier.
+# expenser clicks "Clear" and then "+" once per participant, so Splitser itself splits the total
+# equally by shares (amounts always add up; editing the total later re-splits). Entries are
+# saved with "Save and add another" so a
+# batch stays on one form. Amounts use "." as decimal separator. The expense is
+# booked in the list's default currency. The date is set through the react-calendar popup:
+# rows with a date first return to today's month and then walk back month by month (PAST
+# dates only, up to 36 months back); rows without a date are explicitly set to today.
+name: splitser
+description: Add expenses to a Splitser list, split equally (1 share each) among the participants
+start_url: "https://app.splitser.com/lists"
+
+variables:
+  list_id:
+    required: true   # chosen by the group picker, or pass --var list_id=...
+    description: "Splitser list id (the UUID in the list's URL)"
+
+# Stage: which group to work in. Items are the group links on the lists page.
+group_picker:
+  url: "https://app.splitser.com/lists"
+  items: 'a[href*="/lists/"]'
+  value_attribute: href
+  value_regex: '/lists/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})'
+  label: 'h1, h2, h3, h4, h5'
+  variable: list_id
+  wait_for: 'a[href*="/lists/"]'
+
+# Stage: member names. The "Paid by" <select> on the Add transaction form lists every member
+# and has the signed-in user selected on a fresh form.
+members:
+  url: "https://app.splitser.com/lists/{list_id}/transactions/create"
+  items: '#transaction-member-dropdown select option'
+  me: '#transaction-member-dropdown select option:checked'
+
+settings:
+  default_timeout_ms: 15000
+  slow_mo_ms: 50
+  amount_decimal_separator: "."
+  date_format: "%Y-%m-%d"
+  # Splitser login is via Google, which refuses sign-in in Playwright-launched browsers
+  # ("This browser or app may not be secure"). "chrome" starts your real Chrome as a normal
+  # process and attaches to it. One-time login: expenser flow login flows/splitser.yaml
+  browser: chrome
+
+# Names in your participants file must match Splitser's member names exactly
+# (case-sensitive, e.g. "alice"). Map differing spellings here: {"Alice": "alice"}.
+participant_aliases: {}
+
+login:
+  logged_in_selector: account_link
+
+selectors:
+  account_link: 'a[href="/account"]'                 # nav "Account" link, only when logged in
+  amount_input: "#transaction-calculator"
+  paid_by_select: "#transaction-member-dropdown select"
+  description_input: "#transaction-what-for"
+  # Per-member AMOUNT box; {p} is matched EXACTLY against the member name shown in the row.
+  # (Not used by the steps any more: the split is made with the share "+" buttons below.)
+  participant_amount_input: '[class*="WParticipant__Container"]:has(div:text-is("{p}")) input[type=text]'
+  # The member row's share multiplier is "- 1x +"; the second button container is "+".
+  participant_plus_button: '[class*="WParticipant__Container"]:has(div:text-is("{p}")) [class*="WMultiplier__ButtonContainer"] >> nth=1'
+  clear_split_button: 'role=button[name="Clear" s]'
+  # "Split (N)" heading; N = number of members in the split.
+  split_count_heading: 'h2:text-is("Split ({transaction.participant_count})")'
+  done_button: 'role=button[name="Done"]'
+  save_and_add_another_button: 'role=button[name="Save and add another"]'
+  # React mirrors the typed text into the value attribute, so an empty description means
+  # the form is fresh/reset — i.e. the previous "Save and add another" has completed.
+  empty_form: '#transaction-what-for[value=""]'
+  # Date picker (react-calendar popup). Day tiles are labelled "<day> <Month name> <year>".
+  date_button: '[class*="ExpenseInfo__DatePickerButton"]'
+  date_dialog: 'role=dialog'
+  prev_month_button: 'role=dialog >> .react-calendar__navigation__prev-button'
+  next_month_button: 'role=dialog >> .react-calendar__navigation__next-button'
+  day_tile: 'role=dialog >> button:has(> abbr[aria-label="{transaction.day} {transaction.month_name} {transaction.year}"])'
+  today_tile: 'role=dialog >> button:has(> abbr[aria-label="{today.day} {today.month_name} {today.year}"])'
+  date_ok_button: 'role=dialog >> role=button[name="OK"]'
+
+# Open the "Add transaction" form once; every transaction is entered on it and saved with
+# "Save and add another", which stores the expense and resets the form for the next one.
+# (After a failure the runner reloads start_url and re-runs setup, landing here again.)
+setup:
+  - goto: "https://app.splitser.com/lists/{list_id}/transactions/create"
+  - wait_for: amount_input
+
+per_transaction:
+  - wait_for: empty_form
+  - fill: {target: amount_input, value: "{transaction.amount}"}
+  - select: {target: paid_by_select, label: "{transaction.paid_by}"}
+    when: "{transaction.paid_by}"
+    # not optional: a silently skipped payer would book the expense on the wrong person
+  # Set the transaction date (only when the row has one).
+  - group:
+      when: "{transaction.date_iso}"
+      steps:
+        - click: date_button
+        - wait_for: date_dialog
+        # The picker may reopen on the previously chosen month: first return to today's month.
+        - click_until: {target: next_month_button, until: today_tile, max: 36}
+        - click_until: {target: prev_month_button, until: day_tile, max: 36}   # bank dates are in the past
+        - click: day_tile
+        - click: date_ok_button
+        - wait_for: {target: date_dialog, state: hidden}
+  # No date on the row: set today explicitly, so it can't inherit the previous row's date.
+  - group:
+      when: "{transaction.no_date}"
+      steps:
+        - click: date_button
+        - wait_for: date_dialog
+        - click_until: {target: next_month_button, until: today_tile, max: 36}
+        - click: today_tile
+        - click: date_ok_button
+        - wait_for: {target: date_dialog, state: hidden}
+  - fill: {target: description_input, value: "{transaction.name}"}
+  # Equal split with Splitser's own share multipliers (verified live 2026-11-09):
+  # "Clear" resets every member to no share (it only shows when a split exists, e.g. left over
+  # from the previous "Save and add another"), then "+" gives each participant 1x. Splitser
+  # computes the per-member amounts itself (100 among 3 = 33.33/33.33/33.34) and stores shares,
+  # so editing the total later in Splitser re-splits it.
+  - if_visible:
+      target: clear_split_button
+      timeout_ms: 1000
+      then:
+        - click: clear_split_button
+  - for_each:
+      items: transaction.participants
+      as: p
+      steps:
+        - click: participant_plus_button
+  # Guard: the split must show exactly this many members before saving.
+  - assert_visible: split_count_heading
+  - click: save_and_add_another_button
+    commit: true
+  - wait_for: {target: empty_form, timeout_ms: 20000}   # form reset => saved
+    commit: true
+
+# Dry run: throw away the filled form by reopening a fresh one (nothing is saved).
+dry_run_cleanup:
+  - goto: "https://app.splitser.com/lists/{list_id}/transactions/create"
+  - wait_for: amount_input
+
+# Back to the list so you can see the new expenses.
+teardown:
+  - goto: "https://app.splitser.com/lists/{list_id}/transactions"

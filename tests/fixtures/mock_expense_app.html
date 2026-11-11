@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Mock Expenses</title>
+<style>
+  body { font-family: sans-serif; margin: 2rem; }
+  [hidden] { display: none !important; }
+  #dlg { border: 1px solid #888; padding: 1rem; margin-top: 1rem; max-width: 24rem; }
+  #dlg label { display: block; margin: .3rem 0; }
+  .error { color: #b00; }
+</style>
+</head>
+<body>
+<div id="login-gate" hidden>
+  <p>Please log in</p>
+  <button id="login-btn">Log in</button>
+</div>
+
+<main id="app">
+  <header data-testid="group-header"><h1 id="group-title">Holiday Group</h1></header>
+  <div id="member-dropdown">
+    <select aria-label="Signed-in member">
+      <option>Alice</option><option selected>Bob</option><option>Carol</option>
+    </select>
+  </div>
+  <button id="add-expense" type="button">Add expense</button>
+
+  <div id="dlg" role="dialog" aria-label="New expense" hidden>
+    <label>What <input name="title" type="text" placeholder="Title"></label>
+    <label>Amount <input name="amount" inputmode="decimal" placeholder="0,00"></label>
+    <label>Paid by
+      <select name="paid_by">
+        <option value="">--</option>
+        <option>Alice</option><option>Bob</option><option>Carol</option>
+      </select>
+    </label>
+    <label>Date <input name="date" placeholder="dd-mm-yyyy"></label>
+    <label>Picked date <button type="button" id="date-btn" class="ExpenseInfo__DatePickerButton-x1">-</button></label>
+    <fieldset>
+      <legend>For whom</legend>
+      <ul id="members" style="list-style:none;padding:0">
+        <li><label><input type="checkbox" data-member="Alice" checked> Alice</label>
+            <input type="text" class="member-amount" aria-label="Amount Alice" data-amount-for="Alice" inputmode="decimal"></li>
+        <li><label><input type="checkbox" data-member="Bob" checked> Bob</label>
+            <input type="text" class="member-amount" aria-label="Amount Bob" data-amount-for="Bob" inputmode="decimal"></li>
+        <li><label><input type="checkbox" data-member="Carol" checked> Carol</label>
+            <input type="text" class="member-amount" aria-label="Amount Carol" data-amount-for="Carol" inputmode="decimal"></li>
+      </ul>
+    </fieldset>
+    <p class="error" role="alert" id="err"></p>
+    <button type="button" id="cancel-btn">Cancel</button>
+    <button type="button" id="save-btn">Save</button>
+  </div>
+
+  <div id="cal" role="dialog" aria-label="Choose date" hidden style="border:1px solid #888;padding:.5rem;max-width:22rem">
+    <div class="react-calendar">
+      <div class="react-calendar__navigation">
+        <button type="button" class="react-calendar__navigation__arrow react-calendar__navigation__prev-button">&lsaquo;</button>
+        <button type="button" class="react-calendar__navigation__label"><span class="react-calendar__navigation__label__labelText"></span></button>
+        <button type="button" class="react-calendar__navigation__arrow react-calendar__navigation__next-button">&rsaquo;</button>
+      </div>
+      <div class="react-calendar__month-view__days"></div>
+    </div>
+    <button type="button" id="cal-cancel">Cancel</button>
+    <button type="button" id="cal-ok">OK</button>
+  </div>
+
+  <h2>Expenses</h2>
+  <ul id="expenses"></ul>
+</main>
+
+<script>
+  window.__expenses = [];
+  // ---- react-calendar-like date picker. ?today=YYYY-MM-DD makes "today" deterministic. ----
+  const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const todayParam = new URLSearchParams(location.search).get('today');
+  const TODAY = todayParam ? new Date(todayParam + 'T12:00:00') : new Date();
+  let chosen = new Date(TODAY.getFullYear(), TODAY.getMonth(), TODAY.getDate());
+  let pending = chosen;
+  let view = new Date(chosen.getFullYear(), chosen.getMonth(), 1);
+  const cal = document.querySelector('#cal');
+  const fmtBtn = (d) => `${d.toLocaleString('en-US', {month: 'short'})} ${d.getDate()}, ${d.getFullYear()}`;
+  const dateBtn = document.querySelector('#date-btn');
+  dateBtn.textContent = fmtBtn(chosen);
+  function renderCal() {
+    cal.querySelector('.react-calendar__navigation__label').firstElementChild.textContent =
+      `${MONTHS[view.getMonth()]} ${view.getFullYear()}`;
+    const box = cal.querySelector('.react-calendar__month-view__days');
+    box.innerHTML = '';
+    const lead = (view.getDay() + 6) % 7; // weeks start on Monday
+    for (let i = 0; i < 42; i++) {
+      const d = new Date(view.getFullYear(), view.getMonth(), 1 - lead + i);
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'react-calendar__tile react-calendar__month-view__days__day' +
+        (d.getMonth() !== view.getMonth() ? ' react-calendar__month-view__days__day--neighboringMonth' : '') +
+        (iso(d) === iso(pending) ? ' react-calendar__tile--active' : '');
+      const a = document.createElement('abbr');
+      a.setAttribute('aria-label', `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`);
+      a.textContent = d.getDate();
+      b.appendChild(a);
+      b.onclick = () => { pending = d; renderCal(); };
+      box.appendChild(b);
+    }
+  }
+  dateBtn.onclick = () => { pending = chosen; view = new Date(chosen.getFullYear(), chosen.getMonth(), 1); renderCal(); cal.hidden = false; };
+  cal.querySelector('.react-calendar__navigation__prev-button').onclick = () => { view = new Date(view.getFullYear(), view.getMonth() - 1, 1); renderCal(); };
+  cal.querySelector('.react-calendar__navigation__next-button').onclick = () => { view = new Date(view.getFullYear(), view.getMonth() + 1, 1); renderCal(); };
+  document.querySelector('#cal-cancel').onclick = () => { cal.hidden = true; };
+  document.querySelector('#cal-ok').onclick = () => { chosen = pending; dateBtn.textContent = fmtBtn(chosen); cal.hidden = true; };
+
+  const $ = (s) => document.querySelector(s);
+  const dlg = $('#dlg');
+
+  if (location.search.includes('login=required') && localStorage.getItem('loggedIn') !== '1') {
+    $('#app').hidden = true;
+    $('#login-gate').hidden = false;
+  }
+  $('#login-btn').onclick = () => { localStorage.setItem('loggedIn', '1'); location.reload(); };
+
+  $('#add-expense').onclick = () => {
+    dlg.querySelectorAll('input[name]').forEach(i => i.value = '');
+    dlg.querySelector('select').value = '';
+    dlg.querySelectorAll('[data-member]').forEach(c => c.checked = true);
+    dlg.querySelectorAll('.member-amount').forEach(i => i.value = '');
+    $('#err').textContent = '';
+    dlg.hidden = false;
+  };
+  $('#cancel-btn').onclick = () => { dlg.hidden = true; };
+  $('#save-btn').onclick = () => {
+    const title = dlg.querySelector('[name=title]').value.trim();
+    const amount = parseFloat(dlg.querySelector('[name=amount]').value.replace(',', '.'));
+    const paidBy = dlg.querySelector('[name=paid_by]').value;
+    const date = dlg.querySelector('[name=date]').value;
+    const members = [...dlg.querySelectorAll('[data-member]')].filter(c => c.checked).map(c => c.dataset.member);
+    if (!title) { $('#err').textContent = 'Title required'; return; }
+    if (!(amount > 0)) { $('#err').textContent = 'Amount must be positive'; return; }
+    if (!members.length) { $('#err').textContent = 'Pick at least one member'; return; }
+    // Like Splitser: each member's box is an AMOUNT (not a share count) and must add up to the total.
+    const split = {};
+    let sum = 0;
+    for (const m of members) {
+      const raw = dlg.querySelector(`[data-amount-for="${m}"]`).value.trim().replace(',', '.');
+      const v = raw === '' ? 0 : parseFloat(raw);
+      if (Number.isNaN(v)) { $('#err').textContent = `Invalid amount for ${m}`; return; }
+      split[m] = v;
+      sum += v;
+    }
+    if (Math.abs(sum - amount) > 0.001) {
+      $('#err').textContent = `Member amounts (${sum.toFixed(2)}) do not add up to the total (${amount.toFixed(2)})`;
+      return;
+    }
+    const exp = { title, amount, paid_by: paidBy, date, date_iso: iso(chosen), participants: members, split };
+    window.__expenses.push(exp);
+    const li = document.createElement('li');
+    li.dataset.testid = 'expense-row';
+    li.textContent = `${title} - ${amount.toFixed(2)} (${members.join(', ')})`;
+    $('#expenses').appendChild(li);
+    dlg.hidden = true;
+  };
+</script>
+</body>
+</html>

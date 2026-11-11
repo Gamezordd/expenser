@@ -1,0 +1,131 @@
+# ---------------------------------------------------------------------------
+# Flow template: how expenser adds one transaction to a web app.
+#
+# Workflow:  expenser flow record FLOW   -> capture selectors by clicking
+#            expenser flow validate FLOW -> check they match on the page
+#            expenser flow test FLOW --step -> dry-run one sample expense
+#            expenser push ... --dry-run, then without --dry-run
+#
+# Templating: {transaction.name} {transaction.amount} (uses amount_decimal_separator)
+#   {transaction.amount_raw} (12.50) {transaction.date} (date_format, empty if unset)
+#   Date parts (English, locale-independent; empty if no date): {transaction.day} (5)
+#   {transaction.day2} (05) {transaction.month} (3) {transaction.month2} (03)
+#   {transaction.month_name} (March) {transaction.month_abbr} (Mar) {transaction.year}
+#   {transaction.date_iso} (2026-03-05); {transaction.no_date} is "1" when there is no date.
+#   Today (always set): {today.day} {today.day2} {today.month} {today.month2}
+#   {today.month_name} {today.month_abbr} {today.year} {today.date_iso}
+#   {transaction.paid_by} {transaction.participants_csv}
+#   {transaction.excluded_participants_csv} {flow.name}, your own variables
+#   ({group_url}) and loop variables ({p}, {p_raw} = name before alias).
+#   {transaction.participant_count}. Inside a for_each over transaction.participants:
+#   {p_amount} / {p_amount_raw} = that person's equal share of the total (cents remainder goes
+#   to the first participants; shares sum exactly to the amount). Not available in other loops.
+#   Literal braces: write {{ and }} (e.g. a regex quantifier a{{2}}).
+# ---------------------------------------------------------------------------
+name: my_app
+description: Add expenses to my_app
+start_url: "https://example.com/app"      # may contain {variables}
+
+variables: {}
+  # group_url:
+  #   required: true
+  #   description: "Full URL of the group page"
+  # currency:
+  #   default: EUR
+
+# Optional stages used by the interactive wizard (`expenser`):
+# group_picker:                      # let the user choose which group/list to work in
+#   url: "https://example.com/groups"
+#   items: 'a[href*="/groups/"]'     # one element per group
+#   value_attribute: href            # attribute with the id (or "text")
+#   value_regex: '/groups/([0-9]+)'  # group 1 = the value; items not matching are ignored
+#   label: 'h2'                      # optional: descendant whose text names the group
+#   variable: group_id               # must be declared under variables:
+#   wait_for: 'a[href*="/groups/"]'
+# members:                           # read the member names from the app
+#   url: "https://example.com/groups/{group_id}/new"
+#   items: 'select#paid-by option'   # text of each element = a member name
+#   me: 'select#paid-by option:checked'   # optional: the signed-in user
+
+settings:
+  default_timeout_ms: 10000        # per-action timeout
+  slow_mo_ms: 100                  # delay between browser actions (helps debugging)
+  amount_decimal_separator: "."    # how {transaction.amount} is rendered
+  date_format: "%d-%m-%Y"          # how {transaction.date} is rendered
+  login_check_timeout_ms: 5000     # how long to wait for login.logged_in_selector
+  browser: bundled                 # bundled = Playwright Chromium; chrome = your real Google Chrome
+                                   # attached over CDP (needed for Google sign-in; log in once with
+                                   # `expenser flow login <flow>`)
+  # chrome_path: /opt/google/chrome/chrome   # optional; else $EXPENSER_CHROME / PATH lookup
+
+# Name in the participants file -> name shown in the app.
+participant_aliases: {}
+  # Bobby: Bob
+
+login:
+  # Selector key that is visible only when logged in. If it is not visible after
+  # opening start_url, you are asked to log in manually (stored in the profile).
+  logged_in_selector: logged_in_marker
+
+# Named "HTML accessors". Any Playwright selector syntax (css, text=, role=, xpath,
+# `a >> b` chains). May contain {placeholders}. Fill with `expenser flow record`.
+selectors:
+  logged_in_marker: "body"
+  add_expense_button: "role=button[name=/add expense/i]"
+  title_input: "input[name=title]"
+  amount_input: "input[name=amount]"
+  member_checkbox: 'label:has-text("{p}") >> input[type=checkbox]'
+  save_button: "role=button[name=/save/i]"
+
+setup: []                  # steps run once after login
+
+per_transaction:           # steps run for every transaction
+  - click: add_expense_button
+  - fill: {target: title_input, value: "{transaction.name}"}
+  - fill: {target: amount_input, value: "{transaction.amount}"}
+  # Untick everyone who does NOT take part:
+  - for_each:
+      items: transaction.excluded_participants
+      as: p
+      steps:
+        - uncheck: member_checkbox
+  - click: save_button
+    commit: true           # skipped in --dry-run (and asked about with --confirm-each)
+
+dry_run_cleanup: []        # run instead of committing in --dry-run (default: reload start_url + setup)
+teardown: []               # steps run once at the end
+
+# ---------------------------------------------------------------------------
+# STEP REFERENCE (a target is a key from `selectors`, otherwise a raw selector)
+#
+#   - goto: "https://..."                          # or {url: ...}
+#   - click: key                                   # or {target, nth: 0, force: false}
+#   - fill: {target: key, value: "{transaction.name}"}
+#   - type: {target: key, value: "text", delay_ms: 50, clear: true}   # key-by-key typing
+#   - select: {target: key, label: "Alice"}        # or value: "alice-id"
+#   - check: key                                   # / uncheck: key  (or {target, nth, force})
+#   - press: Enter                                 # or {target: key, key: Enter}
+#   - wait_for: {target: key, state: hidden, timeout_ms: 5000}  # visible|hidden|attached|detached
+#   - wait_for_url: "**/expenses"                  # glob, or /regex/
+#   - wait_ms: 500
+#   - for_each:
+#       items: transaction.participants            # | transaction.excluded_participants | all_participants
+#       as: p
+#       steps: [ ... ]
+#   - if_visible: {target: key, timeout_ms: 1500, then: [ ... ], else: [ ... ]}
+#   - click_until: {target: prev_month_button, until: day_tile, max: 24, delay_ms: 150}
+#       # click `target` repeatedly until `until` (key/selector, templated) is visible; 0 clicks if
+#       # it already is; error if not reached after `max` clicks (e.g. paging a date picker)
+#   - group:                                       # block sharing when/optional/description
+#       when: "{transaction.date_iso}"
+#       steps: [ ... ]
+#   - pause: "Solve the captcha, then press Enter"
+#   - screenshot: ".expenser/shots/{transaction.name}.png"
+#   - assert_visible: key
+#
+# MODIFIERS on any step:
+#     commit: true        skipped in --dry-run (marks "Save" buttons and what depends on them)
+#     optional: true      failure is logged, not fatal
+#     description: "..."  shown in the log
+#     when: "{transaction.date}"   run only if the rendered text is non-empty
+# ---------------------------------------------------------------------------

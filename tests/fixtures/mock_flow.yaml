@@ -1,0 +1,54 @@
+name: mock_app
+description: Flow for the fake expense app used in tests
+start_url: "{app_url}"
+variables:
+  app_url: {required: true, description: "URL of the mock app"}
+settings:
+  default_timeout_ms: 3000
+  slow_mo_ms: 0
+  amount_decimal_separator: ","
+  date_format: "%d-%m-%Y"
+participant_aliases:
+  Bobby: Bob
+login:
+  logged_in_selector: group_header
+selectors:
+  group_header: "[data-testid=group-header]"
+  add_expense_button: "role=button[name=/add expense/i]"
+  expense_dialog: "role=dialog"
+  title_input: "input[name=title]"
+  amount_input: "input[name=amount]"
+  paid_by_select: "select[name=paid_by]"
+  date_input: "input[name=date]"
+  member_checkbox: 'label:has-text("{p}") >> input[type=checkbox]'
+  cancel_button: "role=button[name=Cancel]"
+  save_button: "role=button[name=Save]"
+  expense_row: "[data-testid=expense-row]"
+  member_amount: 'li:has-text("{p}") input.member-amount'
+setup: []
+per_transaction:
+  - click: add_expense_button
+  - wait_for: expense_dialog
+  - fill: {target: title_input, value: "{transaction.name}"}
+  - fill: {target: amount_input, value: "{transaction.amount}"}
+  - select: {target: paid_by_select, label: "{transaction.paid_by}"}
+    when: "{transaction.paid_by}"
+  - fill: {target: date_input, value: "{transaction.date}"}
+    when: "{transaction.date}"
+  - for_each:
+      items: transaction.participants
+      as: p
+      steps:
+        - fill: {target: member_amount, value: "{p_amount}"}
+  - for_each:
+      items: transaction.excluded_participants
+      as: p
+      steps:
+        - uncheck: member_checkbox
+  - click: save_button
+    commit: true
+  - wait_for: {target: expense_dialog, state: hidden}
+    commit: true
+dry_run_cleanup:
+  - click: cancel_button
+  - wait_for: {target: expense_dialog, state: hidden}
